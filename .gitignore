@@ -1,0 +1,4 @@
+.wwebjs_*
+/conversations/*
+error.log
+node_modules
