@@ -1,438 +1,336 @@
 import ollama from 'ollama';
 import qrcode from 'qrcode-terminal';
 import pkg from 'whatsapp-web.js';
-import fs from 'fs/promises'; // Using fs.promises for async file operations
+import fs from 'fs/promises';
 import path from 'path';
 
-const CONVERSATIONS_DIR = 'conversations';
-const LOG_FILE = 'error.log';
-// Timestamp will be generated live for each console message.
-
-//Example systemMessage
-export const systemMessage = { // Objek systemMessage tidak akan memiliki timestamp di sini
-    role: "system",
-    content: `
-Anda adalah AI Assistant profesional yang hanya dapat menjawab pertanyaan dan memberikan bantuan yang relevan dengan peran-peran di dunia Teknologi Informasi (IT) berikut ini:
-
-- Web Developer
-- Database Administrator
-- Systems Analyst
-- Data Scientist
-- Network Administrator
-- Network Engineer
-- Information Security Analyst
-- Software Engineer
-- Cloud Computing Specialist
-- User Experience (UX) Designer
-- IT Coordinator
-- IT Engineer
-- Software Developer
-- Support Specialist
-- Chief Information Officer (CIO)
-- Computer Systems Manager
-- Data Analyst
-- Data Quality Manager
-- IT Analyst
-- IT Director
-- Computer Network Architect
-- Application Developer
-- Computer Programmer
-- Computer Support Specialist
-- System Analyst
-- System Designer
-- System Implementator
-- UI/UX Designer
-- Technical Writer
-- DevOps Engineer
-- Serta semua peran profesional lain yang relevan dalam bidang Teknologi Informasi (IT).
-
-**Batasan dan aturan utama:**
-1. Anda *hanya* akan menjawab pertanyaan, permintaan, atau diskusi yang berhubungan langsung dengan topik IT, teknologi digital, sistem informasi, pengembangan perangkat lunak, jaringan komputer, keamanan siber, analisis data, desain pengalaman pengguna, dan bidang-bidang terkait.
-2. Anda *tidak akan* menjawab, merespons, atau memberikan opini apa pun tentang topik di luar bidang IT seperti: hiburan, politik, hubungan pribadi, agama, psikologi umum, filsafat, kesehatan, keuangan pribadi, astrologi, dan lain-lain.
-3. Jika pengguna mengajukan pertanyaan di luar cakupan peran IT, Anda harus menolak dengan sopan dan memberi tahu bahwa Anda hanya dapat membantu dalam konteks dunia Teknologi Informasi.
-4. Anda menjawab dengan pendekatan profesional, berbasis keahlian teknis, dan tidak berperan sebagai teman ngobrol umum, motivator, atau penasihat pribadi.
-5. Selalu arahkan kembali ke topik IT jika terjadi penyimpangan.
-
-Contoh penolakan jika ada pertanyaan di luar bidang IT:
-> "Maaf, saya hanya dapat membantu dalam topik yang berkaitan dengan bidang Teknologi Informasi (IT). Silakan ajukan pertanyaan terkait IT."
-
-Fokus utama Anda adalah memberikan jawaban akurat, profesional, dan teknis sesuai standar industri IT global.
-`
+// ===================================================================================
+// I. KONFIGURASI BOT
+// ===================================================================================
+const CONFIG = {
+    OLLAMA_MODEL: 'gemma3:4b', // Model yang digunakan. 'phi3' sangat direkomendasikan.
+    MAX_HISTORY_MESSAGES: 12, // Jumlah pesan terakhir yang dikirim ke AI (termasuk system prompt)
+    CONVERSATIONS_DIR: 'conversations',
+    LOG_FILE: 'error.log',
 };
 
-// --- Logging Utility ---
+const SYSTEM_PROMPT = {
+    role: "system",
+    content: `Anda adalah "Asisten Virtual Ma'soem University". Peran utama Anda adalah untuk membantu calon mahasiswa, orang tua, dan siapa pun yang tertarik untuk mendapatkan informasi akurat dan relevan mengenai Universitas Ma'soem. Anda harus selalu bersikap ramah, membantu, dan profesional.
+
+## SUMBER PENGETAHUAN UTAMA
+
+Informasi Anda secara EKSKLUSIF berasal dari teks di bawah ini. JANGAN menggunakan pengetahuan eksternal atau informasi di luar konteks ini. Semua jawaban harus didasarkan pada data berikut:
+
+[Informasi Umum]
+Universitas Ma’soem adalah salah satu universitas swasta di Bandung terfavorit, yang memiliki beberapa fakultas dan jurusan/program studi (prodi) yang unik dan beragam. Kami memiliki Fakultas Ekonomi dan Bisnis Islam, Fakultas Komputer, Fakultas Pertanian, Fakultas Keguruan dan Ilmu Pendidikan, dan Fakultas Teknik. Kami berusaha mewujudkan mahasiswa menjadi pengusaha sejak berkuliah dengan mendatangkan dosen-dosen tamu dari kalangan pengusaha sukses. Sistem pembiayaan kami memungkinkan untuk dicicil, membuat kami menjadi salah satu universitas swasta yang murah dan berkualitas di Bandung.
+
+[Fasilitas]
+Tersedia fasilitas asrama putri/mahasiswi dengan kapasitas 168 orang dan asrama putra/mahasiswa dengan kapasitas 48 orang. Lokasi asrama dekat dengan lingkungan kampus.
+
+[Fakultas dan Program Studi]
+
+Fakultas Ekonomi dan Bisnis Islam (FEBI):
+
+Perbankan Syariah (S1): Mempelajari prinsip ekonomi Islam, instrumen keuangan syariah, manajemen risiko, dan hukum perbankan syariah. Prospek karir di bank syariah, lembaga keuangan mikro syariah, asuransi syariah, konsultasi keuangan, dan lembaga pemerintah.
+Manajemen Bisnis Syariah (S1): Mempelajari prinsip ekonomi Islam, manajemen keuangan syariah, dan hukum bisnis syariah. Prospek karir di perusahaan konvensional atau multinasional yang menerapkan prinsip syariah.
+Fakultas Komputer (FKOM):
+
+Sistem Informasi (S1): Keahlian dalam pengembangan perangkat lunak, manajemen database, analisis sistem, keamanan informasi, dan teknologi jaringan. Prospek karir di perusahaan teknologi, start-up, sebagai ahli keamanan informasi, atau analis sistem.
+Komputerisasi Akuntansi (D3): Keahlian dalam mengelola data, menganalisis informasi keuangan, dan menggunakan software akuntansi. Prospek karir di berbagai jenis perusahaan (jasa, manufaktur, perbankan) dan konsultan akuntansi.
+Bisnis Digital (S1): Mempelajari e-commerce, digital marketing, analisis data, dan strategi bisnis digital. Prospek karir di perusahaan teknologi, ritel, agensi digital marketing, atau menjadi wirausaha.
+Fakultas Pertanian (FP):
+
+Agribisnis (S1): Keahlian dalam mengelola usaha pertanian/peternakan secara efisien, analisis pasar, dan strategi pemasaran. Prospek karir di perusahaan agribisnis, distribusi produk pertanian, lembaga riset, perbankan pertanian, atau wirausaha.
+Teknologi Pangan (S1): Keahlian dalam proses pembuatan produk pangan yang efisien dan inovatif. Prospek karir di perusahaan makanan dan minuman, industri farmasi, institusi riset, konsultan, atau pengusaha pangan.
+Fakultas Keguruan & Ilmu Pendidikan (FKIP):
+
+Pendidikan Bahasa Inggris (S1): Prospek karir sebagai pengajar, atau di dunia profesional seperti perusahaan multinasional, penerbitan, media, pariwisata, hingga diplomat.
+Bimbingan dan Konseling (S1): Keahlian dalam asesmen psikologis untuk membantu masalah pribadi, profesional, dan akademis. Prospek karir di institusi pendidikan atau sebagai tim HRD di perusahaan.
+Fakultas Teknik (FT):
+
+Teknik Industri (S1): Keahlian dalam perencanaan produksi, manajemen rantai pasok, perancangan sistem kerja, dan ergonomi. Prospek karir di manufaktur, logistik, konsultan manajemen, atau start-up teknologi.
+Informatika (S1): Keahlian dalam penguasaan bahasa pemrograman (Java, Python, PHP, dll.), serta analisis dan perancangan sistem. Prospek karir di perusahaan teknologi, perbankan, manufaktur, lembaga pemerintahan, atau membangun start-up sendiri.
+[Informasi Kontak dan Pendaftaran]
+Untuk semua pertanyaan terkait detail pendaftaran, jadwal, rincian biaya Uang Kuliah Tunggal (UKT), dan cara pembayaran/cicilan, sumber informasi resmi adalah:
+
+Website PMB: https://pmb.masoemuniversity.com/
+Konsultasi via WhatsApp: +62 815 6033 022
+## ATURAN DAN BATASAN PENTING
+
+Tetap Dalam Konteks: HANYA jawab pertanyaan yang berkaitan dengan Universitas Ma'soem berdasarkan informasi yang diberikan di atas.
+
+Tolak Pertanyaan Di Luar Konteks: Jika pengguna bertanya tentang topik lain (misalnya, universitas lain, berita umum, opini pribadi, bantuan mengerjakan tugas), Anda HARUS menolak dengan sopan. Gunakan frasa seperti:
+
+"Mohon maaf, saya adalah Asisten Virtual yang khusus dirancang untuk memberikan informasi mengenai Universitas Ma'soem. Saya tidak memiliki informasi mengenai hal tersebut."
+"Fokus saya adalah membantu Anda terkait pendaftaran dan informasi umum Universitas Ma'soem. Untuk pertanyaan lain, saya tidak dapat membantunya."
+Pengalihan untuk Informasi Sensitif/Detail: Untuk pertanyaan spesifik mengenai:
+
+Rincian biaya kuliah (UKT) yang pasti.
+Jadwal pendaftaran yang detail (tanggal buka/tutup).
+Prosedur teknis pendaftaran di website.
+Status pendaftaran seseorang.
+Cara mencicil biaya kuliah.
+Anda TIDAK BOLEH memberikan jawaban karangan atau asumsi. SELALU arahkan pengguna ke kontak resmi. Gunakan respons seperti:
+
+"Untuk informasi detail dan ter-update mengenai biaya kuliah dan pilihan cicilan, saya sarankan Anda untuk mengunjungi situs resmi PMB kami di https://pmb.masoemuniversity.com/ atau berkonsultasi langsung dengan tim admisi kami via WhatsApp di nomor +62 815 6033 022 agar mendapatkan informasi yang paling akurat."
+"Mengenai jadwal pendaftaran dan alur teknisnya, informasi terlengkap dan resmi tersedia di https://pmb.masoemuniversity.com/. Anda juga bisa bertanya langsung ke tim kami di WhatsApp +62 815 6033 022."
+Jangan Beropini: Hindari memberikan opini pribadi. Jangan mengatakan satu prodi "lebih baik" dari yang lain kecuali untuk menjelaskan keunggulannya berdasarkan data yang ada.
+
+Struktur Jawaban: Berikan jawaban yang jelas, singkat, dan terstruktur. Gunakan poin-poin (bullet points) jika perlu untuk mempermudah pembacaan.`
+};
+
+// ===================================================================================
+// II. UTILITAS LOGGING & CACHING
+// ===================================================================================
+
 /**
- * Mencatat pesan error dengan timestamp ke file log.
- * Juga mengirimkan notifikasi ke console.error, console.warn, dan console.log.
- * @param {string} message Pesan error yang akan dicatat.
- * @param {Error} [error] Objek error, jika ada.
- * @param {string} [context] Konteks tambahan tentang di mana error terjadi.
+ * Cache dalam memori untuk menyimpan percakapan aktif.
+ * Kunci: userIdentifier (string), Nilai: array pesan (object[]).
+ * @type {Map<string, object[]>}
  */
-async function logError(message, error = null, context = '') {
-    const liveTimestamp = new Date().toLocaleString('en-GB', { hour12: false }); // Timestamp for console messages
-    const fileLogTimestamp = liveTimestamp; // Using the same timestamp for file log for consistency
+const conversationCache = new Map();
 
-    let logEntry = `[${fileLogTimestamp}]`;
-    if (context) {
-        logEntry += ` [CONTEXT: ${context}]`;
+/**
+ * Mencatat pesan dengan timestamp ke konsol dan file log.
+ * @param {string} message Pesan yang akan dicatat.
+ * @param {Error|null} [error=null] Objek error, jika ada.
+ * @param {string} [level='INFO'] Level log (INFO, WARN, ERROR).
+ */
+async function log(message, error = null, level = 'INFO') {
+    const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
+    const context = error?.stack?.split('\n')[1]?.trim() || 'N/A';
+    const logMessage = `[${timestamp}] [${level}] ${message}`;
+
+    // Tampilkan di konsol sesuai level
+    if (level === 'ERROR') {
+        console.error(logMessage, error || '');
+    } else if (level === 'WARN') {
+        console.warn(logMessage);
+    } else {
+        console.log(logMessage);
     }
-    logEntry += ` ERROR: ${message}\n`;
 
-    if (error) {
-        logEntry += `Detail: ${error.message || 'Tidak ada detail error tambahan.'}\n`;
-        if (error.stack) {
-            logEntry += `Stack: ${error.stack}\n`;
+    // Hanya tulis error ke file log untuk menjaga file tetap ringkas
+    if (level === 'ERROR') {
+        try {
+            const fileContent = `${logMessage}\n${error ? `Detail: ${error.message}\n` : ''}${error?.stack ? `Stack: ${error.stack}\n` : ''}---\n`;
+            await fs.appendFile(CONFIG.LOG_FILE, fileContent, 'utf8');
+        } catch (writeErr) {
+            console.error(`[${timestamp}] [FATAL] Gagal menulis ke file log:`, writeErr);
         }
-    }
-    logEntry += '---\n';
-
-    try {
-        await fs.appendFile(LOG_FILE, logEntry, 'utf8');
-        const consoleContextStr = context ? ` (context: ${context})` : '';
-        const baseMessage = `Logged error${consoleContextStr}: ${message}`;
-
-        console.error(`[${liveTimestamp}] ${baseMessage}`);
-        console.warn(`[${liveTimestamp}] WARNING: ${baseMessage}`);
-        // Added console.log as per your request
-        console.log(`[${liveTimestamp}] INFO (Error Logged to File): ${baseMessage}${error ? ` - Error Detail: ${error.message || 'N/A'}` : ''}`);
-
-    } catch (err) { // This catch is for fs.appendFile failure
-        const fsFailMsg = `GAGAL MENULIS KE LOG FILE: ${err.message}`;
-        console.error(`[${liveTimestamp}] ${fsFailMsg}`);
-        console.warn(`[${liveTimestamp}] WARNING: ${fsFailMsg}`);
-        // Added console.log for this specific failure
-        console.log(`[${liveTimestamp}] INFO (Log File Write Failure): ${fsFailMsg}`);
-
-        // Still attempt to log the original error to console
-        const originalErrorContextStr = context ? ` (context: ${context})` : '';
-        const originalErrorBaseMsg = `Error Asli (yang gagal ditulis ke file)${originalErrorContextStr}: ${message}`;
-        console.error(`[${liveTimestamp}] ${originalErrorBaseMsg}`, error); // The 'error' object is passed to console.error here
-
-        let warnDetails = '';
-        if (error) {
-            warnDetails = ` - Detail: ${error.message || (typeof error === 'string' ? error : 'Error object details logged with console.error')}`;
-        }
-        console.warn(`[${liveTimestamp}] WARNING: ${originalErrorBaseMsg}${warnDetails}`);
-        // Added console.log for the original error that failed to be written to file
-        console.log(`[${liveTimestamp}] INFO (Original Error - Not Written to File): ${originalErrorBaseMsg}${error ? ` - Error Detail: ${error.message || (typeof error === 'string' ? error : 'See console.error for full object')}` : ''}`);
     }
 }
-// --- End Logging Utility ---
-// --- End Logging Utility ---
 
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
-
-// --- Conversation Management ---
+// ===================================================================================
+// III. MANAJEMEN PERCAKAPAN
+// ===================================================================================
 
 /**
- * Menyimpan percakapan pengguna tertentu ke file JSONL mereka.
- * Setiap pesan ditulis sebagai baris JSON terpisah.
+ * Memuat percakapan untuk pengguna dari file JSONL.
  * @param {string} userIdentifier - Identifier unik pengguna.
- * @param {Array<Object>} conversationArray - Array percakapan pengguna.
+ * @returns {Promise<object[]|null>} Array percakapan atau null jika file tidak ada.
+ */
+async function loadConversationFromFile(userIdentifier) {
+    const userFile = path.join(CONFIG.CONVERSATIONS_DIR, `${userIdentifier}.jsonl`);
+    try {
+        const data = await fs.readFile(userFile, 'utf8');
+        return data.trim().split('\n').map(line => JSON.parse(line));
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return null; // File tidak ada, ini adalah kondisi normal untuk pengguna baru.
+        }
+        await log(`Gagal memuat percakapan dari file untuk ${userIdentifier}.`, error, 'ERROR');
+        return []; // Kembalikan array kosong jika terjadi error baca lain
+    }
+}
+
+/**
+ * Menyimpan percakapan pengguna ke file JSONL.
+ * Menggunakan cache sebagai sumber data utama.
+ * @param {string} userIdentifier - Identifier unik pengguna.
  * @returns {Promise<void>}
  */
-async function saveUserConversation(userIdentifier, conversationArray) {
-    const userConversationDir = path.join(CONVERSATIONS_DIR, userIdentifier);
-    const userConversationFile = path.join(userConversationDir, 'conversation.jsonl');
-    const context = `saveUserConversation(${userIdentifier})`;
+async function saveConversationToFile(userIdentifier) {
+    if (!conversationCache.has(userIdentifier)) return;
+
+    const conversation = conversationCache.get(userIdentifier);
+    const userFile = path.join(CONFIG.CONVERSATIONS_DIR, `${userIdentifier}.jsonl`);
+    const data = conversation.map(msg => JSON.stringify(msg)).join('\n') + '\n';
 
     try {
-        await fs.mkdir(userConversationDir, { recursive: true });
-        let fileHandle;
-        try {
-            fileHandle = await fs.open(userConversationFile, 'w');
-            for (const message of conversationArray) {
-                if (message) {
-                    await fileHandle.write(JSON.stringify(message) + '\n');
-                }
-            }
-
-            console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Percakapan untuk ${userIdentifier} berhasil disimpan di ${userConversationFile}`);
-        } finally {
-            if (fileHandle) {
-                await fileHandle.close();
-            }
-        }
+        await fs.writeFile(userFile, data, 'utf8');
     } catch (error) {
-        await logError(`Gagal menyimpan percakapan`, error, context);
+        await log(`Gagal menyimpan percakapan ke file untuk ${userIdentifier}.`, error, 'ERROR');
     }
 }
 
 /**
- * Memuat atau membuat percakapan untuk pengguna dari file JSONL.
- * Metode ini memastikan direktori pengguna ada, membaca file jika ada,
- * dan memvalidasi/memperbaiki system message termasuk timestamp-nya.
+ * Memuat atau membuat percakapan baru untuk pengguna.
+ * Menggunakan cache untuk performa. Jika tidak ada di cache, coba muat dari file.
  * @param {string} userIdentifier - Identifier unik pengguna.
- * @returns {Promise<Array<Object>>} Array percakapan pengguna.
+ * @returns {Promise<object[]>} Array percakapan pengguna.
  */
 async function getOrCreateConversation(userIdentifier) {
-    const userConversationDir = path.join(CONVERSATIONS_DIR, userIdentifier);
-    const userConversationFile = path.join(userConversationDir, 'conversation.jsonl');
-    const context = `getOrCreateConversation(${userIdentifier})`;
-    let conversationMessages = [];
-    let loadedFromFile = false;
-    const systemMessageWithTimestamp = {
-        ...systemMessage,
-        timestamp: new Date().toISOString()
-    };
-
-    try {
-        try {
-            await fs.mkdir(userConversationDir, { recursive: true });
-        } catch (mkdirError) {
-            await logError(`Gagal membuat direktori pengguna.`, mkdirError, context);
-            return [systemMessageWithTimestamp];
-        }
-
-        try {
-            const data = await fs.readFile(userConversationFile, 'utf8');
-            const lines = data.trim().split('\n');
-
-            for (const line of lines) {
-                if (line.trim() === '') continue;
-
-                try {
-                    const message = JSON.parse(line);
-                    conversationMessages.push(message);
-                } catch (parseError) {
-                    console.warn(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${context}] Gagal mem-parse baris JSONL: "${line.substring(0, 100)}...". Melewati. Error: ${parseError.message}`);
-                }
-            }
-            loadedFromFile = true;
-            console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Percakapan untuk ${userIdentifier} berhasil dimuat dari ${userConversationFile}`);
-        } catch (readFileError) {
-            if (readFileError.code === 'ENOENT') {
-                console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${context}] File percakapan tidak ditemukan. Menginisialisasi baru.`);
-            } else {
-                await logError(`Gagal memuat atau mem-parse file percakapan JSONL.`, readFileError, context);
-            }
-        }
-    } catch (unexpectedError) {
-        await logError(`Error tak terduga di awal getOrCreateConversation.`, unexpectedError, context);
-        return [systemMessageWithTimestamp];
+    // 1. Cek cache terlebih dahulu untuk performa maksimal
+    if (conversationCache.has(userIdentifier)) {
+        return conversationCache.get(userIdentifier);
     }
 
-    let needsSystemMessageCorrection = false;
-    if (conversationMessages.length === 0) {
-        needsSystemMessageCorrection = true;
-        if (!loadedFromFile) {
-            console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${context}] Menginisialisasi percakapan baru dengan system message.`);
-        }
+    // 2. Jika tidak ada di cache, coba muat dari file
+    let conversation = await loadConversationFromFile(userIdentifier);
+
+    // 3. Jika tidak ada di file (pengguna baru) atau terjadi error, buat percakapan baru
+    if (!conversation || conversation.length === 0) {
+        log(`Menginisialisasi percakapan baru untuk ${userIdentifier}`);
+        conversation = [{ ...SYSTEM_PROMPT, timestamp: new Date().toISOString() }];
     } else {
-        const firstMsg = conversationMessages[0];
-        if (!(firstMsg.role === 'system' &&
-            firstMsg.content === systemMessage.content &&
-            typeof firstMsg.timestamp === 'string' && firstMsg.timestamp.length > 0
-        )) {
-            needsSystemMessageCorrection = true;
-            console.warn(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${context}] System message memerlukan koreksi/penambahan timestamp.`);
+        // 4. Validasi dan perbaiki system prompt jika percakapan dimuat dari file
+        const firstMsg = conversation[0];
+        if (firstMsg.role !== 'system' || firstMsg.content !== SYSTEM_PROMPT.content) {
+            log(`Memperbaiki system prompt untuk ${userIdentifier}`, null, 'WARN');
+            conversation = [
+                { ...SYSTEM_PROMPT, timestamp: new Date().toISOString() },
+                ...conversation.filter(msg => msg.role !== 'system')
+            ];
         }
     }
 
-    if (needsSystemMessageCorrection) {
-        const filteredUserAndAssistantMessages = conversationMessages.filter(msg => msg.role !== 'system');
-        conversationMessages = [systemMessageWithTimestamp, ...filteredUserAndAssistantMessages];
-        if (loadedFromFile) {
-            console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${context}] System message diperbaiki/ditambahkan timestampnya.`);
-        }
-    }
-
-    return conversationMessages;
+    // 5. Simpan ke cache dan kembalikan
+    conversationCache.set(userIdentifier, conversation);
+    return conversation;
 }
 
+
+// ===================================================================================
+// IV. LOGIKA UTAMA BOT
+// ===================================================================================
+
 /**
- * Mendapatkan respons dari model AI dan mengelola histori percakapan.
+ * Mendapatkan respons dari model Ollama dan mengelola histori percakapan.
  * @param {string} question - Pertanyaan dari pengguna.
  * @param {string} userIdentifier - Identifier unik pengguna.
  * @returns {Promise<string>} Respons dari bot.
  */
 async function getResponse(question, userIdentifier) {
-    const context = `getResponse(${userIdentifier})`;
-    let conversation;
-    try {
-        conversation = await getOrCreateConversation(userIdentifier);
-    } catch (error) {
-        await logError('Error tak terduga dari getOrCreateConversation.', error, context);
-        return 'Mohon maaf, terjadi masalah internal saat menyiapkan percakapan Anda. Silakan coba lagi.';
-    }
+    const conversation = await getOrCreateConversation(userIdentifier);
 
+    // Tambahkan pesan pengguna ke histori
     conversation.push({
         role: 'user',
-        content: question.toLowerCase(),
+        content: question.trim(),
         timestamp: new Date().toISOString()
     });
+    conversationCache.set(userIdentifier, conversation); // Update cache
 
-    let botResponseContent = '';
-    let ollamaSuccess = false;
-    const MAX_MESSAGES = 10;
-    const recentMessages = conversation.slice(-MAX_MESSAGES);
-    const hasSystemMessage = recentMessages.some(msg => msg.role === 'system' && msg.content === systemMessage.content);
-    if (!hasSystemMessage) {
-        recentMessages.unshift(systemMessage); // Note: systemMessage doesn't have live timestamp here, but getOrCreateConversation ensures the stored one does.
-        // For Ollama, the raw systemMessage content is key.
-    }
+    // Siapkan pesan untuk dikirim ke Ollama
+    const messagesForOllama = conversation
+        .map(({ role, content }) => ({ role, content })) // Hapus timestamp sebelum kirim
+        .slice(-CONFIG.MAX_HISTORY_MESSAGES); // Ambil N pesan terakhir
+
 
     try {
         const response = await ollama.chat({
-            model: 'gemma3:4b',
-            messages: recentMessages,
+            model: CONFIG.OLLAMA_MODEL,
+            messages: messagesForOllama,
         });
-        botResponseContent = response.message.content;
-        ollamaSuccess = true;
-    } catch (error) {
-        await logError(`Ollama chat gagal.`, error, context + ` - Question: "${question}"`);
-        botResponseContent = 'Mohon maaf, terjadi masalah saat memproses permintaan Anda. Silakan coba lagi nanti.';
-        conversation.pop();
-    }
 
-    if (ollamaSuccess) {
+        const botResponseContent = response.message.content;
+
+        // Tambahkan respons bot ke histori
         conversation.push({
             role: 'assistant',
             content: botResponseContent,
             timestamp: new Date().toISOString()
         });
-    }
-    try {
-        await saveUserConversation(userIdentifier, conversation);
-    } catch (error) { // This catch is for saveUserConversation error, logError inside it will also console.warn
-        const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
-        const errMsg = `[${context}] Peringatan: Gagal menyimpan percakapan setelah respons Ollama. Detail sudah di-log oleh saveUserConversation.`;
-        console.error(`[${timestamp}] ${errMsg}`);
-        console.warn(`[${timestamp}] WARNING: ${errMsg}`);
-    }
+        conversationCache.set(userIdentifier, conversation); // Update cache
 
-    return botResponseContent;
+        // Simpan percakapan ke file secara asynchronous tanpa menunggu
+        saveConversationToFile(userIdentifier).catch(err => log("Gagal menyimpan setelah respons.", err, "ERROR"));
+
+        return botResponseContent;
+
+    } catch (error) {
+        await log(`Ollama chat gagal untuk ${userIdentifier}.`, error, 'ERROR');
+        // Hapus pesan pengguna yang gagal diproses dari histori
+        conversation.pop();
+        conversationCache.set(userIdentifier, conversation);
+        return 'Mohon maaf, terjadi masalah saat memproses permintaan Anda. Tim teknis kami telah diberitahu. Silakan coba lagi nanti.';
+    }
 }
 
-// --- WhatsApp Client Setup ---
+
+// ===================================================================================
+// V. KLIEN WHATSAPP & EVENT HANDLING
+// ===================================================================================
 const { Client, LocalAuth } = pkg;
 
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        // headless: true, // Aktifkan untuk server
-        // args: ['--no-sandbox', '--disable-setuid-sandbox'], // Mungkin diperlukan di Linux
+        // headless: 'new', // Gunakan 'new' untuk versi terbaru, atau true. Aktifkan di server.
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Mungkin diperlukan di Linux
     }
 });
 
 client.on('qr', (qr) => {
-    try {
-        qrcode.generate(qr, { small: true });
-    } catch (e) {
-        const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
-        const errMsg = `Gagal generate QR Code:`;
-        console.error(`[${timestamp}] ${errMsg}`, e);
-        console.warn(`[${timestamp}] WARNING: ${errMsg}${e ? ` - Detail: ${e.message || e}` : ''}`);
-        logError("Gagal generate QR Code di terminal", e, "client.on('qr')");
-    }
+    log('QR Code perlu di-scan. Tampilkan di terminal.');
+    qrcode.generate(qr, { small: true });
 });
 
-client.on('authenticated', () => {
-    console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] AUTHENTICATED`);
-});
-
-client.on('auth_failure', async (msg) => {
-    const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
-    const errMsg = `AUTHENTICATION FAILURE`;
-    console.error(`[${timestamp}] ${errMsg}`, msg);
-    console.warn(`[${timestamp}] WARNING: ${errMsg}${msg ? ` - Detail: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}` : ''}`);
-    await logError('WhatsApp authentication failure.', new Error(String(msg)), 'client.on("auth_failure")');
-});
-
-client.on('ready', async () => {
-    console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Client is ready!`);
-    try {
-        await fs.mkdir(CONVERSATIONS_DIR, { recursive: true });
-        console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Direktori dasar percakapan '${CONVERSATIONS_DIR}' telah dipastikan ada.`);
-    } catch (error) {
-        await logError(`Gagal membuat direktori dasar percakapan '${CONVERSATIONS_DIR}'. Bot mungkin tidak berfungsi dengan benar.`, error, 'client.on("ready")');
-    }
-});
+client.on('ready', () => log('WhatsApp Client siap digunakan!'));
+client.on('authenticated', () => log('Autentikasi WhatsApp berhasil.'));
+client.on('auth_failure', (msg) => log('Autentikasi WhatsApp GAGAL.', new Error(msg), 'ERROR'));
+client.on('disconnected', (reason) => log('Koneksi WhatsApp terputus.', new Error(reason), 'WARN'));
 
 client.on('message', async (message) => {
-    const messageEventTimestamp = message.t ? new Date(message.t * 1000) : new Date();
-    const formattedMessageEventTimestamp = messageEventTimestamp.toLocaleString('en-GB', { hour12: false }); // Timestamp of the WA message event
+    // Abaikan pesan dari status, grup, atau jika tidak ada isi pesan
+    if (message.from === 'status@broadcast' || message.isStatus || message.author || !message.body) {
+        return;
+    }
 
-    const messageContext = `client.on('message', from: ${message.from}, timestamp: ${formattedMessageEventTimestamp}, body: "${message.body ? message.body.substring(0, 50) + '...' : 'N/A'}")`;
+    const userIdentifier = message.from;
+    log(`Pesan diterima dari ${userIdentifier}: "${message.body}"`);
 
     try {
-        if (message.body) {
-            const userIdentifier = message.from;
-            let chat;
+        const chat = await message.getChat();
 
-            try {
-                chat = await message.getChat();
-            } catch (getChatError) {
-                await logError('Gagal mendapatkan objek chat.', getChatError, messageContext);
-                return;
-            }
+        // Kirim status "mengetik..." untuk memberikan feedback visual
+        chat.sendStateTyping();
 
-            try {
-                await chat.sendStateTyping();
-                console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${formattedMessageEventTimestamp}] Typing state sent for ${userIdentifier}`);
-            } catch (typingError) {
-                await logError('Gagal sendStateTyping.', typingError, messageContext);
-            }
+        const responseText = await getResponse(message.body, userIdentifier);
 
-            const responseText = await getResponse(message.body, userIdentifier);
-            console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Response received from AI for ${userIdentifier}`);
+        // Hapus status "mengetik..." sebelum membalas
+        chat.clearState();
 
-            try {
-                await chat.clearState();
-                const stateClearedAt = new Date().toLocaleString('en-GB', { hour12: false }); // Specific moment state was cleared
-                console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${stateClearedAt}] Typing state cleared for ${userIdentifier}`);
-            } catch (clearStateError) {
-                await logError('Gagal clearState.', clearStateError, messageContext);
-            }
+        await message.reply(responseText);
+        log(`Balasan dikirim ke ${userIdentifier}.`);
 
-            try {
-                await message.reply(responseText);
-                // The outermost timestamp is still the actual "live" log time.
-                console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Reply sent for ${userIdentifier}`);
-            } catch (replyError) {
-                await logError('Gagal mengirim balasan.', replyError, messageContext);
-            }
-        }
     } catch (error) {
-        await logError('Error tidak tertangani di event "message".', error, messageContext);
-        if (message && typeof message.reply === 'function' && !message.hasReplied) {
-            try {
-                await message.reply('Mohon maaf, terjadi kesalahan tak terduga. Tim kami telah diberitahu.');
-            } catch (fallbackReplyError) {
-                await logError('Gagal mengirim balasan error fallback.', fallbackReplyError, messageContext);
-            }
+        await log(`Error tidak tertangani saat memproses pesan dari ${userIdentifier}.`, error, 'ERROR');
+        try {
+            await message.reply('Mohon maaf, terjadi kesalahan tak terduga. Tim kami telah diberitahu dan sedang menanganinya.');
+        } catch (fallbackError) {
+            await log(`Gagal mengirim pesan error fallback ke ${userIdentifier}.`, fallbackError, 'ERROR');
         }
     }
 });
 
-client.on('message_create', (message) => {
-    if (message.fromMe) return;
 
-    try {
-        const waMessageTimestamp = new Date(message.timestamp * 1000);
-        const formattedWaMessageTime = waMessageTimestamp.toLocaleString('en-GB', { hour12: false }); // Timestamp of actual WA message creation
-        console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] [${formattedWaMessageTime}] PESAN DARI ${message.from} ke ${message.to}: ${message.body}`);
-    } catch (e) {
-        const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
-        const errMsg = `Error saat logging message_create:`;
-        console.error(`[${timestamp}] ${errMsg}`, e);
-        console.warn(`[${timestamp}] WARNING: ${errMsg}${e ? ` - Detail: ${e.message || e}` : ''}`);
-    }
-});
-
-client.on('disconnected', async (reason) => {
-    console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Client was logged out`, reason);
-    await logError('WhatsApp client disconnected.', new Error(String(reason)), 'client.on("disconnected")');
-});
-
-// --- Initialize Client ---
+// ===================================================================================
+// VI. INISIALISASInpm install
+// ===================================================================================
 (async () => {
     try {
-        console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] Menginisialisasi WhatsApp client...`);
+        // Pastikan direktori percakapan ada
+        await fs.mkdir(CONFIG.CONVERSATIONS_DIR, { recursive: true });
+        log(`Direktori percakapan '${CONFIG.CONVERSATIONS_DIR}' telah dipastikan ada.`);
+
+        log('Menginisialisasi WhatsApp client...');
         await client.initialize();
-        console.log(`[${new Date().toLocaleString('en-GB', { hour12: false })}] WhatsApp client berhasil diinisialisasi.`);
+        log('Inisialisasi WhatsApp client berhasil.');
     } catch (error) {
-        await logError('Kritis: Gagal menginisialisasi WhatsApp client.', error, 'initialization');
-        process.exit(1);
+        await log('KRITIS: Gagal total saat inisialisasi.', error, 'ERROR');
+        process.exit(1); // Keluar dari proses jika inisialisasi gagal total
     }
 })();
