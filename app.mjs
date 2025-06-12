@@ -1,4 +1,4 @@
-import ollama from 'ollama';
+import axios from 'axios';
 import qrcode from 'qrcode-terminal';
 import pkg from 'whatsapp-web.js';
 import fs from 'fs/promises';
@@ -8,8 +8,9 @@ import path from 'path';
 // I. KONFIGURASI BOT
 // ===================================================================================
 const CONFIG = {
-    OLLAMA_MODEL: 'gemma3:4b', // Model yang digunakan. 'phi3' sangat direkomendasikan.
-    MAX_HISTORY_MESSAGES: 12, // Jumlah pesan terakhir yang dikirim ke AI (termasuk system prompt)
+    GEMINI_API_KEY: 'AIzaSyDPdfeVeCpJxIBbq-RxrgUhyy4Zr1YcBLs', // Your Gemini API Key
+    GEMINI_MODEL: 'gemini-1.5-flash', // Model yang stabil
+    MAX_HISTORY_MESSAGES: 12,
     CONVERSATIONS_DIR: 'conversations',
     LOG_FILE: 'error.log',
 };
@@ -17,7 +18,7 @@ const CONFIG = {
 const SYSTEM_PROMPT = {
     role: "system",
     content: `
-    Anda adalah "Asisten Virtual Universitas Ma'soem". Peran utama Anda adalah membantu calon mahasiswa, orang tua, dan siapa pun yang tertarik untuk mendapatkan informasi yang akurat dan relevan mengenai Universitas Ma'soem. Anda harus selalu bersikap ramah, membantu, dan profesional.
+Anda adalah "Asisten Virtual Universitas Ma'soem". Peran utama Anda adalah membantu calon mahasiswa, orang tua, dan siapa pun yang tertarik untuk mendapatkan informasi yang akurat dan relevan mengenai Universitas Ma'soem. Anda harus selalu bersikap ramah, membantu, dan profesional.
 
 ## SUMBER PENGETAHUAN UTAMA
 
@@ -101,25 +102,12 @@ Jawaban Anda (BENAR, karena tidak ada di teks): "Mohon maaf, saya tidak memiliki
 // II. UTILITAS LOGGING & CACHING
 // ===================================================================================
 
-/**
- * Cache dalam memori untuk menyimpan percakapan aktif.
- * Kunci: userIdentifier (string), Nilai: array pesan (object[]).
- * @type {Map<string, object[]>}
- */
 const conversationCache = new Map();
 
-/**
- * Mencatat pesan dengan timestamp ke konsol dan file log.
- * @param {string} message Pesan yang akan dicatat.
- * @param {Error|null} [error=null] Objek error, jika ada.
- * @param {string} [level='INFO'] Level log (INFO, WARN, ERROR).
- */
 async function log(message, error = null, level = 'INFO') {
     const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
-    const context = error?.stack?.split('\n')[1]?.trim() || 'N/A';
     const logMessage = `[${timestamp}] [${level}] ${message}`;
 
-    // Tampilkan di konsol sesuai level
     if (level === 'ERROR') {
         console.error(logMessage, error || '');
     } else if (level === 'WARN') {
@@ -128,7 +116,6 @@ async function log(message, error = null, level = 'INFO') {
         console.log(logMessage);
     }
 
-    // Hanya tulis error ke file log untuk menjaga file tetap ringkas
     if (level === 'ERROR') {
         try {
             const fileContent = `${logMessage}\n${error ? `Detail: ${error.message}\n` : ''}${error?.stack ? `Stack: ${error.stack}\n` : ''}---\n`;
@@ -143,38 +130,23 @@ async function log(message, error = null, level = 'INFO') {
 // III. MANAJEMEN PERCAKAPAN
 // ===================================================================================
 
-/**
- * Memuat percakapan untuk pengguna dari file JSONL.
- * @param {string} userIdentifier - Identifier unik pengguna.
- * @returns {Promise<object[]|null>} Array percakapan atau null jika file tidak ada.
- */
 async function loadConversationFromFile(userIdentifier) {
     const userFile = path.join(CONFIG.CONVERSATIONS_DIR, `${userIdentifier}.jsonl`);
     try {
         const data = await fs.readFile(userFile, 'utf8');
         return data.trim().split('\n').map(line => JSON.parse(line));
     } catch (error) {
-        if (error.code === 'ENOENT') {
-            return null; // File tidak ada, ini adalah kondisi normal untuk pengguna baru.
-        }
+        if (error.code === 'ENOENT') return null;
         await log(`Gagal memuat percakapan dari file untuk ${userIdentifier}.`, error, 'ERROR');
-        return []; // Kembalikan array kosong jika terjadi error baca lain
+        return [];
     }
 }
 
-/**
- * Menyimpan percakapan pengguna ke file JSONL.
- * Menggunakan cache sebagai sumber data utama.
- * @param {string} userIdentifier - Identifier unik pengguna.
- * @returns {Promise<void>}
- */
 async function saveConversationToFile(userIdentifier) {
     if (!conversationCache.has(userIdentifier)) return;
-
     const conversation = conversationCache.get(userIdentifier);
     const userFile = path.join(CONFIG.CONVERSATIONS_DIR, `${userIdentifier}.jsonl`);
     const data = conversation.map(msg => JSON.stringify(msg)).join('\n') + '\n';
-
     try {
         await fs.writeFile(userFile, data, 'utf8');
     } catch (error) {
@@ -182,95 +154,95 @@ async function saveConversationToFile(userIdentifier) {
     }
 }
 
-/**
- * Memuat atau membuat percakapan baru untuk pengguna.
- * Menggunakan cache untuk performa. Jika tidak ada di cache, coba muat dari file.
- * @param {string} userIdentifier - Identifier unik pengguna.
- * @returns {Promise<object[]>} Array percakapan pengguna.
- */
 async function getOrCreateConversation(userIdentifier) {
-    // 1. Cek cache terlebih dahulu untuk performa maksimal
     if (conversationCache.has(userIdentifier)) {
         return conversationCache.get(userIdentifier);
     }
-
-    // 2. Jika tidak ada di cache, coba muat dari file
     let conversation = await loadConversationFromFile(userIdentifier);
-
-    // 3. Jika tidak ada di file (pengguna baru) atau terjadi error, buat percakapan baru
     if (!conversation || conversation.length === 0) {
         log(`Menginisialisasi percakapan baru untuk ${userIdentifier}`);
         conversation = [{ ...SYSTEM_PROMPT, timestamp: new Date().toISOString() }];
-    } else {
-        // 4. Validasi dan perbaiki system prompt jika percakapan dimuat dari file
-        const firstMsg = conversation[0];
-        if (firstMsg.role !== 'system' || firstMsg.content !== SYSTEM_PROMPT.content) {
-            log(`Memperbaiki system prompt untuk ${userIdentifier}`, null, 'WARN');
-            conversation = [
-                { ...SYSTEM_PROMPT, timestamp: new Date().toISOString() },
-                ...conversation.filter(msg => msg.role !== 'system')
-            ];
-        }
     }
-
-    // 5. Simpan ke cache dan kembalikan
     conversationCache.set(userIdentifier, conversation);
     return conversation;
 }
-
 
 // ===================================================================================
 // IV. LOGIKA UTAMA BOT
 // ===================================================================================
 
 /**
- * Mendapatkan respons dari model Ollama dan mengelola histori percakapan.
- * @param {string} question - Pertanyaan dari pengguna.
- * @param {string} userIdentifier - Identifier unik pengguna.
- * @returns {Promise<string>} Respons dari bot.
+ * Gets a response from the Gemini API and manages conversation history using system_instruction.
+ * @param {string} question - The user's question.
+ * @param {string} userIdentifier - The unique user identifier.
+ * @returns {Promise<string>} The bot's response.
  */
 async function getResponse(question, userIdentifier) {
     const conversation = await getOrCreateConversation(userIdentifier);
 
-    // Tambahkan pesan pengguna ke histori
+    // Tambahkan pesan pengguna baru ke riwayat
     conversation.push({
         role: 'user',
         content: question.trim(),
         timestamp: new Date().toISOString()
     });
-    conversationCache.set(userIdentifier, conversation); // Update cache
+    conversationCache.set(userIdentifier, conversation);
 
-    // Siapkan pesan untuk dikirim ke Ollama
-    const messagesForOllama = conversation
-        .map(({ role, content }) => ({ role, content })) // Hapus timestamp sebelum kirim
-        .slice(-CONFIG.MAX_HISTORY_MESSAGES); // Ambil N pesan terakhir
+    // Ekstrak system prompt dan siapkan riwayat percakapan
+    const systemInstruction = {
+        role: "system",
+        parts: [{ text: SYSTEM_PROMPT.content }]
+    };
 
+    // Filter riwayat untuk hanya menyertakan giliran 'user' dan 'assistant'/'model'
+    const messagesForGemini = conversation
+        .filter(msg => msg.role === 'user' || msg.role === 'assistant') // Hanya ambil user dan assistant
+        .slice(-CONFIG.MAX_HISTORY_MESSAGES) // Ambil N pesan terakhir
+        .map(({ role, content }) => ({
+            role: role === 'assistant' ? 'model' : 'user', // Konversi 'assistant' ke 'model'
+            parts: [{ text: content }],
+        }));
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI_MODEL}:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
 
     try {
-        const response = await ollama.chat({
-            model: CONFIG.OLLAMA_MODEL,
-            messages: messagesForOllama,
+        // Buat payload dengan 'contents' dan 'system_instruction' yang terpisah
+        const response = await axios.post(url, {
+            contents: messagesForGemini,
+            system_instruction: systemInstruction, // Gunakan field khusus untuk system prompt
+        }, {
+            headers: { 'Content-Type': 'application/json' }
         });
 
-        const botResponseContent = response.message.content;
+        // Cek jika ada kandidat respons
+        if (response.data.candidates && response.data.candidates.length > 0 && response.data.candidates[0].content.parts) {
+            const botResponseContent = response.data.candidates[0].content.parts[0].text;
 
-        // Tambahkan respons bot ke histori
-        conversation.push({
-            role: 'assistant',
-            content: botResponseContent,
-            timestamp: new Date().toISOString()
-        });
-        conversationCache.set(userIdentifier, conversation); // Update cache
+            // Tambahkan respons bot ke histori
+            conversation.push({
+                role: 'assistant',
+                content: botResponseContent,
+                timestamp: new Date().toISOString()
+            });
+            conversationCache.set(userIdentifier, conversation);
 
-        // Simpan percakapan ke file secara asynchronous tanpa menunggu
-        saveConversationToFile(userIdentifier).catch(err => log("Gagal menyimpan setelah respons.", err, "ERROR"));
+            saveConversationToFile(userIdentifier).catch(err => log("Gagal menyimpan setelah respons.", err, "ERROR"));
 
-        return botResponseContent;
+            return botResponseContent;
+        } else {
+            // Tangani jika API tidak memberikan kandidat (misalnya karena filter keamanan)
+            log(`Gemini API tidak memberikan respons kandidat untuk ${userIdentifier}. Respons: ${JSON.stringify(response.data)}`, null, 'WARN');
+            conversation.pop(); // Hapus pesan pengguna yang gagal
+            conversationCache.set(userIdentifier, conversation);
+            return 'Mohon maaf, saya tidak dapat memberikan respons saat ini karena konten mungkin tidak sesuai dengan kebijakan. Silakan coba dengan pertanyaan lain.';
+        }
 
     } catch (error) {
-        await log(`Ollama chat gagal untuk ${userIdentifier}.`, error, 'ERROR');
-        // Hapus pesan pengguna yang gagal diproses dari histori
-        conversation.pop();
+        // Log error yang lebih detail dari API jika tersedia
+        const errorDetail = error.response?.data?.error ? JSON.stringify(error.response.data.error) : error.message;
+        await log(`Gemini API call gagal untuk ${userIdentifier}. Detail: ${errorDetail}`, error, 'ERROR');
+
+        conversation.pop(); // Hapus pesan pengguna yang gagal
         conversationCache.set(userIdentifier, conversation);
         return 'Mohon maaf, terjadi masalah saat memproses permintaan Anda. Tim teknis kami telah diberitahu. Silakan coba lagi nanti.';
     }
@@ -285,8 +257,7 @@ const { Client, LocalAuth } = pkg;
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        // headless: 'new', // Gunakan 'new' untuk versi terbaru, atau true. Aktifkan di server.
-        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Mungkin diperlukan di Linux
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
     }
 });
 
@@ -301,7 +272,6 @@ client.on('auth_failure', (msg) => log('Autentikasi WhatsApp GAGAL.', new Error(
 client.on('disconnected', (reason) => log('Koneksi WhatsApp terputus.', new Error(reason), 'WARN'));
 
 client.on('message', async (message) => {
-    // Abaikan pesan dari status, grup, atau jika tidak ada isi pesan
     if (message.from === 'status@broadcast' || message.isStatus || message.author || !message.body) {
         return;
     }
@@ -311,18 +281,11 @@ client.on('message', async (message) => {
 
     try {
         const chat = await message.getChat();
-
-        // Kirim status "mengetik..." untuk memberikan feedback visual
         chat.sendStateTyping();
-
         const responseText = await getResponse(message.body, userIdentifier);
-
-        // Hapus status "mengetik..." sebelum membalas
         chat.clearState();
-
         await message.reply(responseText);
         log(`Balasan dikirim ke ${userIdentifier}.`);
-
     } catch (error) {
         await log(`Error tidak tertangani saat memproses pesan dari ${userIdentifier}.`, error, 'ERROR');
         try {
@@ -335,19 +298,17 @@ client.on('message', async (message) => {
 
 
 // ===================================================================================
-// VI. INISIALISASInpm install
+// VI. INISIALISASI
 // ===================================================================================
 (async () => {
     try {
-        // Pastikan direktori percakapan ada
         await fs.mkdir(CONFIG.CONVERSATIONS_DIR, { recursive: true });
         log(`Direktori percakapan '${CONFIG.CONVERSATIONS_DIR}' telah dipastikan ada.`);
-
         log('Menginisialisasi WhatsApp client...');
         await client.initialize();
         log('Inisialisasi WhatsApp client berhasil.');
     } catch (error) {
         await log('KRITIS: Gagal total saat inisialisasi.', error, 'ERROR');
-        process.exit(1); // Keluar dari proses jika inisialisasi gagal total
+        process.exit(1);
     }
 })();
